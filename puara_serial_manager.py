@@ -17,7 +17,9 @@ from typing import NamedTuple, Optional
 import json
 import socket
 import threading
+import subprocess
 from time import sleep
+from sys import platform
 
 # Third-party libraries
 from docopt import docopt
@@ -73,6 +75,9 @@ class SerialManager:
             self.config_template = Template(f.read())
 
     def get_ip_address(self):
+        if platform == 'linux':
+            process = subprocess.run(['hostname', '-I'], capture_output=True, encoding='utf-8')
+            return process.stdout.strip()
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect((TEST_IP_ADDR, 80))
         ip_addr = s.getsockname()[0]
