@@ -2,6 +2,8 @@
 
 Usage:
   puara_serial_manager.py <wifiSSID> <wifiPSK>
+  puara_serial_manager.py <wifiSSID> <wifiPSK> <ipAddress>
+  puara_serial_manager.py <wifiSSID> <wifiPSK> <ipAddress> <startPort>
   puara_serial_manager.py -h | --help
   puara_serial_manager.py -v | --version
 
@@ -62,13 +64,19 @@ class PuaraSerialException(Exception):
 
 
 class SerialManager:
-    def __init__(self, wifi: WifiNetwork):
+    def __init__(self, wifi: WifiNetwork, ip_address: Optional[str], start_port: Optional[str]):
         self.wifi = wifi
         self.devices = {}
         self.scanner = threading.Thread(target=self.scan_thread, daemon=True)
         self.scanner.start()
-        self.osc_port = STARTING_PORT
-        self.ip_addr = self.get_ip_address()
+        if start_port:
+            self.osc_port = int(start_port)
+        else:
+            self.osc_port = STARTING_PORT
+        if ip_address:
+            self.ip_addr = ip_address
+        else:
+            self.ip_addr = self.get_ip_address()
         print(f'your ip address is {self.ip_addr}')
         print(f'assigning ports starting at {self.osc_port}')
         with open(TEMPLATE_PATH, 'r') as f:
@@ -137,9 +145,9 @@ class SerialManager:
             print(f'rebooting {device}')
             self.configure_device(device)
         else:
-            print(f'{device} has been successfully configured. rebooting once more')
-            # Reboot the device once more to initialize the config.
+            print(f'{device} has been successfully configured. rebooting once more to initialize config')
             device.ser.write(b'reboot')
+            device.ser.close()
 
     def wait_for_device_ready(self, device: Device):
         ser = device.ser
@@ -179,7 +187,7 @@ class SerialManager:
 
 def main(args):
     wifi = WifiNetwork(ssid=args['<wifiSSID>'], psk=args['<wifiPSK>'])
-    _ = SerialManager(wifi)
+    _ = SerialManager(wifi, args['<ipAddress>'], args['<startPort>'])
     while True:
         sleep(1)
 
