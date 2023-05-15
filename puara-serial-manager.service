@@ -1,0 +1,8 @@
+[Unit]
+Description=Puara Serial Manager
+
+[Service]
+ExecStart=python3 /home/pi/puara-serial-manager/puara_serial_manager.py "2tree" "mappings" "192.168.90.1"
+
+[Install]
+WantedBy=multi-user.target
