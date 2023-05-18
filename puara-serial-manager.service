@@ -2,8 +2,8 @@
 Description=Puara Serial Manager
 
 [Service]
-WorkingDirectory=/home/pi/puara-serial-manager
-ExecStart=python3 puara_serial_manager.py "2tree" "mappings" "192.168.90.1"
+WorkingDirectory=/home/mpu/puara-serial-manager
+ExecStart=python3 -u puara_serial_manager.py "MPU42" "mappings" "192.168.5.1"
 
 [Install]
 WantedBy=multi-user.target
