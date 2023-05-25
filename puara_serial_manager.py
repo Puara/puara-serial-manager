@@ -16,11 +16,8 @@ from string import Template
 from typing import NamedTuple, Optional
 import json
 import logging
-import socket
 import threading
-import subprocess
 from time import sleep
-from sys import platform
 
 # Third-party libraries
 from docopt import docopt
