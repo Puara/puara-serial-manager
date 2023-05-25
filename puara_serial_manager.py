@@ -1,9 +1,7 @@
 """Puara Serial Manager.
 
 Usage:
-  puara_serial_manager.py <wifiSSID> <wifiPSK>
-  puara_serial_manager.py <wifiSSID> <wifiPSK> <ipAddress>
-  puara_serial_manager.py <wifiSSID> <wifiPSK> <ipAddress> <startPort>
+  puara_serial_manager.py <wifiSSID> <wifiPSK> <ipAddress> <port>
   puara_serial_manager.py -h | --help
   puara_serial_manager.py -v | --version
 
@@ -17,6 +15,7 @@ from collections import namedtuple
 from string import Template
 from typing import NamedTuple, Optional
 import json
+import logging
 import socket
 import threading
 import subprocess
@@ -31,12 +30,6 @@ import serial.tools.list_ports
 BAUDRATE = 115200
 READ_TIMEOUT_SECS = 5.0
 
-# The IP address to test the internet connection with.
-TEST_IP_ADDR = '8.8.8.8'
-
-# Ports will be assigned to devices in increasing order, starting with this.
-STARTING_PORT = 8000
-
 TEMPLATE_PATH = 'config_template.json'
 
 DATA_START = b'<<<'
@@ -44,10 +37,14 @@ DATA_END = b'>>>'
 
 WifiNetwork = namedtuple("WifiNetwork", ['ssid', 'psk'])
 
+
+class Config(NamedTuple):
+    ip_addr: str
+    port: int
+
 class Device(NamedTuple):
     device_id: str
     ser: serial.Serial
-    osc_port: int
     name: Optional[str]=None
 
     def __str__(self):
@@ -57,40 +54,22 @@ class Device(NamedTuple):
             return self.name
 
     def named_device(self, name):
-        return Device(self.device_id, self.ser, self.osc_port, name)
+        return Device(self.device_id, self.ser, name)
+
 
 class PuaraSerialException(Exception):
     pass
 
 
 class SerialManager:
-    def __init__(self, wifi: WifiNetwork, ip_address: Optional[str], start_port: Optional[str]):
+    def __init__(self, wifi: WifiNetwork, ip_address: str, port: str):
         self.wifi = wifi
         self.devices = {}
         self.scanner = threading.Thread(target=self.scan_thread, daemon=True)
         self.scanner.start()
-        if start_port:
-            self.osc_port = int(start_port)
-        else:
-            self.osc_port = STARTING_PORT
-        if ip_address:
-            self.ip_addr = ip_address
-        else:
-            self.ip_addr = self.get_ip_address()
-        print(f'your ip address is {self.ip_addr}')
-        print(f'assigning ports starting at {self.osc_port}')
+        self.config = Config(ip_address, port)
         with open(TEMPLATE_PATH, 'r') as f:
             self.config_template = Template(f.read())
-
-    def get_ip_address(self):
-        if platform == 'linux':
-            process = subprocess.run(['hostname', '-I'], capture_output=True, encoding='utf-8')
-            return process.stdout.strip()
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect((TEST_IP_ADDR, 80))
-        ip_addr = s.getsockname()[0]
-        s.close()
-        return ip_addr
 
     def scan_thread(self):
         while True:
@@ -100,18 +79,18 @@ class SerialManager:
                     device_id = port.hwid
                 if device_id in self.devices:
                     device = self.devices[device_id]
+                    logging.debug(f'found existing device {device}')
                     # TODO(p42ul): do something with these?
                 else:
                     ser = serial.Serial()
                     ser.port, ser.baudrate, ser.timeout = port.device, BAUDRATE, READ_TIMEOUT_SECS
-                    device = Device(device_id, ser, self.osc_port)
+                    device = Device(device_id, ser)
                     self.devices[device_id] = device
                     print(f'found new serial device {device}')
                     try:
                         ser.open()
                     except serial.SerialException as e:
                         print(f"Couldn't open serial device {device}, got error {e}")
-                    self.osc_port += 1
                     threading.Thread(target=self.configure_device, args=[device]).start()
             sleep(1)
 
@@ -126,7 +105,7 @@ class SerialManager:
         print(f'getting config data from {device}')
         config_data = self.get_config_data(device)
         config_json = json.loads(config_data)
-        desired_data = self.config_template.substitute(ip_addr=self.ip_addr, osc_port=device.osc_port,
+        desired_data = self.config_template.substitute(ip_addr=self.config.ip_addr, osc_port=self.config.port,
             ssid=self.wifi.ssid, psk=self.wifi.psk)
         desired_json = json.loads(desired_data)
         needs_config = False
@@ -187,7 +166,7 @@ class SerialManager:
 
 def main(args):
     wifi = WifiNetwork(ssid=args['<wifiSSID>'], psk=args['<wifiPSK>'])
-    _ = SerialManager(wifi, args['<ipAddress>'], args['<startPort>'])
+    _ = SerialManager(wifi, args['<ipAddress>'], args['<port>'])
     while True:
         sleep(1)
 
