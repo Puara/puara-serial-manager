@@ -24,10 +24,20 @@ from docopt import docopt
 import serial
 import serial.tools.list_ports
 
+# Local libraries
+from .wired import tstick, tstick_serial, tstick_osc
+
 BAUDRATE = 115200
 READ_TIMEOUT_SECS = 5.0
 
-TEMPLATE_PATH = 'config_template.json'
+CONFIG_TEMPLATE = '''
+{
+    "wifiSSID": "$ssid",
+    "wifiPSK": "$psk",
+    "oscPORT1": $osc_port,
+    "oscIP1": "$ip_addr"
+}
+'''
 
 DATA_START = b'<<<'
 DATA_END = b'>>>'
@@ -59,14 +69,15 @@ class PuaraSerialException(Exception):
 
 
 class SerialManager:
-    def __init__(self, wifi: WifiNetwork, ip_address: str, port: str):
+    def __init__(self, wifi: WifiNetwork, ip_address: Optional[str]=None, port: Optional[str]=None, config_delegate=None):
         self.wifi = wifi
         self.devices = {}
         self.scanner = threading.Thread(target=self.scan_thread, daemon=True)
         self.scanner.start()
         self.config = Config(ip_address, port)
-        with open(TEMPLATE_PATH, 'r') as f:
-            self.config_template = Template(f.read())
+        self.config_delegate = config_delegate
+        self.config_template = Template(CONFIG_TEMPLATE)
+        self.wired_tsticks = tstick.all_tsticks()
 
     def scan_thread(self):
         while True:
@@ -75,9 +86,19 @@ class SerialManager:
                 if not device_id:
                     device_id = port.hwid
                 if device_id in self.devices:
-                    device = self.devices[device_id]
-                    logging.debug(f'found existing device {device}')
+                    pass
                     # TODO(p42ul): do something with these?
+                # Wired T-Stick
+                elif device_id in [ts.ser() for ts in self.wired_tsticks]:
+                    tstick = [ts for ts in self.wired_tsticks if device_id == ts.ser()][0]
+                    config_data = self.config_delegate(tstick.name())
+                    lexer = tstick.lexer()
+                    parser = tstick.parser()
+                    baudrate = tstick.baudrate()
+                    sender = tstick_osc.OSCSender(tstick.name(), '127.0.0.1', config_data.port)
+                    lexer.subscribe(parser.parse)
+                    parser.subscribe(sender.send)
+                    self.devices[device_id] = tstick_serial.TStickSerial(port.device, baudrate, tstick_serial.READ_SIZE, lexer.enqueue, b's')
                 else:
                     ser = serial.Serial()
                     ser.port, ser.baudrate, ser.timeout = port.device, BAUDRATE, READ_TIMEOUT_SECS
@@ -91,6 +112,10 @@ class SerialManager:
                     threading.Thread(target=self.configure_device, args=[device]).start()
             sleep(1)
 
+    def create_config(self, config):
+        return self.config_template.substitute(ip_addr=config.ip_addr, osc_port=config.port,
+                    ssid=self.wifi.ssid, psk=self.wifi.psk)
+
     def configure_device(self, device: Device):
         print(f'waiting for {device} to become ready...')
         self.wait_for_device_ready(device)
@@ -102,8 +127,10 @@ class SerialManager:
         print(f'getting config data from {device}')
         config_data = self.get_config_data(device)
         config_json = json.loads(config_data)
-        desired_data = self.config_template.substitute(ip_addr=self.config.ip_addr, osc_port=self.config.port,
-            ssid=self.wifi.ssid, psk=self.wifi.psk)
+        if self.config_delegate:
+            desired_data = self.create_config(self.config_delegate(device.name))
+        else:
+            desired_data = self.create_config(self.config)
         desired_json = json.loads(desired_data)
         needs_config = False
         for k, desired_v in desired_json.items():
@@ -117,11 +144,7 @@ class SerialManager:
             sleep(3)
             device.ser.write(b'writeconfig')
             sleep(3)
-            device.ser.write(b'reboot')
-            print(f'rebooting {device}')
-            self.configure_device(device)
-        else:
-            print(f'{device} has been successfully configured. rebooting once more to initialize config')
+            print(f'{device} has been successfully configured. rebooting to initialize config')
             device.ser.write(b'reboot')
             device.ser.close()
 
